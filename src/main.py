@@ -1321,12 +1321,17 @@ async def api_chat_completions(request: Request, api_key: dict = Depends(rate_li
     debug_print("="*80)
     
     try:
-        # Parse request body with error handling
         try:
-            body = await request.json()
+            raw_body = await request.body()
+            if not raw_body:
+                debug_print(f"❌ Request body is empty")
+                raise HTTPException(status_code=400, detail="Request body is empty")
+            body = json.loads(raw_body)
         except json.JSONDecodeError as e:
             debug_print(f"❌ Invalid JSON in request body: {e}")
             raise HTTPException(status_code=400, detail=f"Invalid JSON in request body: {str(e)}")
+        except HTTPException:
+            raise
         except Exception as e:
             debug_print(f"❌ Failed to read request body: {e}")
             raise HTTPException(status_code=400, detail=f"Failed to read request body: {str(e)}")

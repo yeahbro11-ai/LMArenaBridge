@@ -1,4 +1,15 @@
 venv/
+.venv/
 *webui_secret_key
 *cache_ggshield
 config.json
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/

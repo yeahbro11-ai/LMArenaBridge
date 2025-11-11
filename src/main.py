@@ -354,7 +354,7 @@ def get_request_headers():
     config = get_config()
     auth_token = config.get("auth_token", "").strip()
     if not auth_token:
-        raise HTTPException(status_code=500, detail="Arena auth token not set in dashboard.")
+        raise HTTPException(status_code=500, detail="Authentication token not configured. Please set it in the dashboard.")
     
     cf_clearance = config.get("cf_clearance", "").strip()
     return {
@@ -511,13 +511,13 @@ async def login_page(request: Request, error: Optional[str] = None):
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Login - LMArena Bridge</title>
+            <title>Admin Login</title>
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <style>
                 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
                 body {{
                     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    background: radial-gradient(circle at top, #1f3b9d 0%, #111c44 45%, #0b1026 100%);
                     min-height: 100vh;
                     display: flex;
                     align-items: center;
@@ -525,12 +525,14 @@ async def login_page(request: Request, error: Optional[str] = None):
                     padding: 20px;
                 }}
                 .login-container {{
-                    background: white;
-                    padding: 40px;
-                    border-radius: 10px;
-                    box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+                    background: rgba(255, 255, 255, 0.95);
+                    padding: 48px;
+                    border-radius: 16px;
+                    box-shadow: 0 35px 75px rgba(8, 15, 52, 0.35);
                     width: 100%;
-                    max-width: 400px;
+                    max-width: 420px;
+                    border: 1px solid rgba(255, 255, 255, 0.4);
+                    backdrop-filter: blur(8px);
                 }}
                 h1 {{
                     color: #333;
@@ -565,21 +567,24 @@ async def login_page(request: Request, error: Optional[str] = None):
                 }}
                 button {{
                     width: 100%;
-                    padding: 12px;
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    padding: 14px;
+                    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
                     color: white;
                     border: none;
-                    border-radius: 6px;
+                    border-radius: 8px;
                     font-size: 16px;
                     font-weight: 600;
                     cursor: pointer;
-                    transition: transform 0.2s;
+                    transition: all 0.3s ease;
+                    box-shadow: 0 4px 14px rgba(79, 70, 229, 0.25);
                 }}
                 button:hover {{
                     transform: translateY(-2px);
+                    box-shadow: 0 6px 20px rgba(79, 70, 229, 0.4);
                 }}
                 button:active {{
                     transform: translateY(0);
+                    box-shadow: 0 2px 8px rgba(79, 70, 229, 0.3);
                 }}
                 .error-message {{
                     background: #fee;
@@ -593,7 +598,7 @@ async def login_page(request: Request, error: Optional[str] = None):
         </head>
         <body>
             <div class="login-container">
-                <h1>LMArena Bridge</h1>
+                <h1>Admin Portal</h1>
                 <div class="subtitle">Sign in to access the dashboard</div>
                 {error_msg}
                 <form action="/login" method="post">
@@ -696,7 +701,7 @@ async def dashboard(session: str = Depends(get_current_session)):
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Dashboard - LMArena Bridge</title>
+            <title>Admin Dashboard</title>
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
             <style>
@@ -724,10 +729,10 @@ async def dashboard(session: str = Depends(get_current_session)):
                     line-height: 1.6;
                 }}
                 .header {{
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    background: linear-gradient(135deg, #111c44 0%, #1e293b 100%);
                     color: white;
-                    padding: 20px 0;
-                    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                    padding: 24px 0;
+                    box-shadow: 0 4px 20px rgba(17, 24, 39, 0.2);
                 }}
                 .header-content {{
                     max-width: 1200px;
@@ -742,15 +747,17 @@ async def dashboard(session: str = Depends(get_current_session)):
                     font-weight: 600;
                 }}
                 .logout-btn {{
-                    background: rgba(255,255,255,0.2);
+                    background: rgba(255, 255, 255, 0.12);
                     color: white;
-                    padding: 8px 16px;
-                    border-radius: 6px;
+                    padding: 10px 18px;
+                    border-radius: 8px;
                     text-decoration: none;
-                    transition: background 0.3s;
+                    border: 1px solid rgba(255, 255, 255, 0.2);
+                    transition: all 0.3s ease;
                 }}
                 .logout-btn:hover {{
-                    background: rgba(255,255,255,0.3);
+                    background: rgba(255, 255, 255, 0.2);
+                    border-color: rgba(255, 255, 255, 0.35);
                 }}
                 .container {{
                     max-width: 1200px;
@@ -759,10 +766,11 @@ async def dashboard(session: str = Depends(get_current_session)):
                 }}
                 .section {{
                     background: white;
-                    border-radius: 10px;
-                    padding: 25px;
-                    margin-bottom: 25px;
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+                    border-radius: 12px;
+                    padding: 28px;
+                    margin-bottom: 28px;
+                    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+                    border: 1px solid rgba(148, 163, 184, 0.2);
                 }}
                 .section-header {{
                     display: flex;
@@ -783,8 +791,8 @@ async def dashboard(session: str = Depends(get_current_session)):
                     font-size: 13px;
                     font-weight: 600;
                 }}
-                .status-good {{ background: #d4edda; color: #155724; }}
-                .status-bad {{ background: #f8d7da; color: #721c24; }}
+                .status-good {{ background: #dcfce7; color: #166534; font-weight: 600; }}
+                .status-bad {{ background: #fee2e2; color: #991b1b; font-weight: 600; }}
                 table {{
                     width: 100%;
                     border-collapse: collapse;
@@ -842,21 +850,24 @@ async def dashboard(session: str = Depends(get_current_session)):
                     transition: all 0.3s;
                 }}
                 button[type="submit"]:not(.btn-delete) {{
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
                     color: white;
+                    box-shadow: 0 2px 8px rgba(79, 70, 229, 0.15);
                 }}
                 button[type="submit"]:not(.btn-delete):hover {{
                     transform: translateY(-2px);
-                    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+                    box-shadow: 0 6px 20px rgba(79, 70, 229, 0.35);
                 }}
                 .btn-delete {{
-                    background: #dc3545;
+                    background: #ef4444;
                     color: white;
-                    padding: 6px 12px;
+                    padding: 8px 14px;
                     font-size: 13px;
+                    border-radius: 8px;
+                    transition: background 0.3s ease;
                 }}
                 .btn-delete:hover {{
-                    background: #c82333;
+                    background: #dc2626;
                 }}
                 .api-key-code {{
                     background: #f8f9fa;
@@ -867,10 +878,10 @@ async def dashboard(session: str = Depends(get_current_session)):
                     color: #495057;
                 }}
                 .badge {{
-                    background: #e7f3ff;
-                    color: #0066cc;
-                    padding: 4px 8px;
-                    border-radius: 4px;
+                    background: rgba(79, 70, 229, 0.1);
+                    color: #4338ca;
+                    padding: 6px 10px;
+                    border-radius: 999px;
                     font-size: 12px;
                     font-weight: 600;
                 }}
@@ -881,10 +892,11 @@ async def dashboard(session: str = Depends(get_current_session)):
                     margin-top: 15px;
                 }}
                 .model-card {{
-                    background: #f8f9fa;
-                    padding: 15px;
-                    border-radius: 8px;
-                    border-left: 4px solid #667eea;
+                    background: #f8fafc;
+                    padding: 16px;
+                    border-radius: 10px;
+                    border-left: 4px solid #4f46e5;
+                    transition: all 0.2s ease;
                 }}
                 .model-header {{
                     display: flex;
@@ -898,10 +910,10 @@ async def dashboard(session: str = Depends(get_current_session)):
                     font-size: 14px;
                 }}
                 .model-rank {{
-                    background: #667eea;
+                    background: #4f46e5;
                     color: white;
-                    padding: 2px 8px;
-                    border-radius: 12px;
+                    padding: 4px 10px;
+                    border-radius: 999px;
                     font-size: 11px;
                     font-weight: 600;
                 }}
@@ -922,17 +934,18 @@ async def dashboard(session: str = Depends(get_current_session)):
                     margin-bottom: 20px;
                 }}
                 .stat-card {{
-                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
                     color: white;
-                    padding: 20px;
-                    border-radius: 8px;
+                    padding: 28px;
+                    border-radius: 12px;
                     text-align: center;
                     animation: fadeIn 0.6s ease-out;
-                    transition: transform 0.3s;
+                    transition: all 0.3s ease;
+                    box-shadow: 0 4px 15px rgba(79, 70, 229, 0.15);
                 }}
                 .stat-card:hover {{
                     transform: translateY(-5px);
-                    box-shadow: 0 8px 16px rgba(102, 126, 234, 0.4);
+                    box-shadow: 0 12px 28px rgba(79, 70, 229, 0.3);
                 }}
                 .section {{
                     animation: slideIn 0.5s ease-out;
@@ -946,7 +959,8 @@ async def dashboard(session: str = Depends(get_current_session)):
                 }}
                 .model-card:hover {{
                     transform: translateY(-3px);
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                    box-shadow: 0 8px 20px rgba(79, 70, 229, 0.15);
+                    border-left-color: #7c3aed;
                 }}
                 .stat-value {{
                     font-size: 32px;
@@ -976,7 +990,7 @@ async def dashboard(session: str = Depends(get_current_session)):
         <body>
             <div class="header">
                 <div class="header-content">
-                    <h1>🚀 LMArena Bridge Dashboard</h1>
+                    <h1>Admin Control Center</h1>
                     <a href="/logout" class="logout-btn">Logout</a>
                 </div>
             </div>
@@ -998,16 +1012,16 @@ async def dashboard(session: str = Depends(get_current_session)):
                     </div>
                 </div>
 
-                <!-- Arena Auth Token -->
+                <!-- Authentication Token -->
                 <div class="section">
                     <div class="section-header">
-                        <h2>🔐 Arena Authentication</h2>
+                        <h2>🔐 Authentication Token</h2>
                         <span class="status-badge {token_class}">{token_status}</span>
                     </div>
                     <form action="/update-auth-token" method="post">
                         <div class="form-group">
-                            <label for="auth_token">Arena Auth Token</label>
-                            <textarea id="auth_token" name="auth_token" placeholder="Paste your arena-auth-prod-v1 token here">{config.get("auth_token", "")}</textarea>
+                            <label for="auth_token">Authentication Token</label>
+                            <textarea id="auth_token" name="auth_token" placeholder="Paste your authentication token here">{config.get("auth_token", "")}</textarea>
                         </div>
                         <button type="submit">Update Token</button>
                     </form>
@@ -1019,14 +1033,14 @@ async def dashboard(session: str = Depends(get_current_session)):
                         <h2>☁️ Cloudflare Clearance</h2>
                         <span class="status-badge {cf_class}">{cf_status}</span>
                     </div>
-                    <p style="color: #666; margin-bottom: 15px;">This is automatically fetched on startup. If API requests fail with 404 errors, the token may have expired.</p>
-                    <code style="background: #f8f9fa; padding: 10px; display: block; border-radius: 6px; word-break: break-all; margin-bottom: 15px;">
+                    <p style="color: #555; margin-bottom: 20px;">The clearance token refreshes automatically at startup. Use the refresh option below if requests begin to fail.</p>
+                    <code style="background: #f1f5f9; padding: 12px; display: block; border-radius: 8px; border: 1px solid rgba(148, 163, 184, 0.3); word-break: break-all; margin-bottom: 18px;">
                         {config.get("cf_clearance", "Not set")}
                     </code>
-                    <form action="/refresh-tokens" method="post" style="margin-top: 15px;">
-                        <button type="submit" style="background: #28a745;">🔄 Refresh Tokens &amp; Models</button>
+                    <form action="/refresh-tokens" method="post" style="margin-top: 18px;">
+                        <button type="submit" style="background: linear-gradient(135deg, #16a34a 0%, #22c55e 100%); box-shadow: 0 4px 12px rgba(34, 197, 94, 0.25);">🔄 Refresh Tokens &amp; Models</button>
                     </form>
-                    <p style="color: #999; font-size: 13px; margin-top: 10px;"><em>Note: This will fetch a fresh cf_clearance token and update the model list.</em></p>
+                    <p style="color: #6b7280; font-size: 13px; margin-top: 12px;"><em>Refreshing will request a new clearance token and update the model catalogue.</em></p>
                 </div>
 
                 <!-- API Keys -->
@@ -1101,7 +1115,7 @@ async def dashboard(session: str = Depends(get_current_session)):
                     <div class="section-header">
                         <h2>🤖 Available Models</h2>
                     </div>
-                    <p style="color: #666; margin-bottom: 15px;">Showing top 20 text-based models (Rank 1 = Best)</p>
+                    <p style="color: #555; margin-bottom: 20px;">Browse the top 20 text-based models. Lower rank numbers indicate higher performance.</p>
                     <div class="model-grid">
                         {models_html}
                     </div>
@@ -1309,7 +1323,7 @@ async def list_models(api_key: dict = Depends(rate_limit_api_key)):
                 "id": model.get("publicName"),
                 "object": "model",
                 "created": int(time.time()),
-                "owned_by": model.get("organization", "lmarena")
+                "owned_by": model.get("organization", "external_provider")
             } for model in text_models if model.get("publicName")
         ]
     }
@@ -1371,7 +1385,7 @@ async def api_chat_completions(request: Request, api_key: dict = Depends(rate_li
             debug_print(f"❌ Failed to load models: {e}")
             raise HTTPException(
                 status_code=503,
-                detail="Failed to load model list from LMArena. Please try again later."
+                detail="Failed to load model list. Please try again later."
             )
         
         model_id = None
@@ -1453,7 +1467,7 @@ async def api_chat_completions(request: Request, api_key: dict = Depends(rate_li
         # Typical limit seems to be around 32K-64K characters based on testing
         MAX_PROMPT_LENGTH = 50000  # Conservative estimate
         if len(prompt) > MAX_PROMPT_LENGTH:
-            error_msg = f"Prompt too long ({len(prompt)} characters). LMArena has a character limit of approximately {MAX_PROMPT_LENGTH} characters. Please reduce the message size."
+            error_msg = f"Prompt too long ({len(prompt)} characters). The upstream service accepts approximately {MAX_PROMPT_LENGTH} characters. Please reduce the message size."
             debug_print(f"❌ {error_msg}")
             raise HTTPException(status_code=400, detail=error_msg)
         
@@ -1532,7 +1546,7 @@ async def api_chat_completions(request: Request, api_key: dict = Depends(rate_li
             debug_print(f"📦 Payload structure: Simple userMessage format")
             debug_print(f" Full payload: {json.dumps(payload, indent=2)}")
 
-        debug_print(f"\n🚀 Making API request to LMArena...")
+        debug_print(f"\n🚀 Making API request to upstream service...")
         debug_print(f"⏱️  Timeout set to: 120 seconds")
         
         # Handle streaming mode
@@ -1636,7 +1650,7 @@ async def api_chat_completions(request: Request, api_key: dict = Depends(rate_li
                             debug_print(f"✅ Stream completed - {len(response_text)} chars sent")
                             
                     except httpx.HTTPStatusError as e:
-                        error_msg = f"LMArena API error: {e.response.status_code}"
+                        error_msg = f"Upstream service error: {e.response.status_code}"
                         print(f"❌ {error_msg}")
                         error_chunk = {
                             "error": {
@@ -1740,18 +1754,18 @@ async def api_chat_completions(request: Request, api_key: dict = Depends(rate_li
                     debug_print(f"\n⚠️  WARNING: Empty response text!")
                     debug_print(f"📄 Full raw response:\n{response.text}")
                     if error_message:
-                        error_detail = f"LMArena API error: {error_message}"
+                        error_detail = f"Upstream service error: {error_message}"
                         print(f"❌ {error_detail}")
                         # Return OpenAI-compatible error response
                         return {
                             "error": {
                                 "message": error_detail,
                                 "type": "upstream_error",
-                                "code": "lmarena_error"
+                                "code": "upstream_error"
                             }
                         }
                     else:
-                        error_detail = "LMArena API returned empty response. This could be due to: invalid auth token, expired cf_clearance, model unavailable, or API rate limiting."
+                        error_detail = "Received empty response from upstream service. This could be due to: invalid authentication token, expired session, model unavailable, or rate limiting."
                         debug_print(f"❌ {error_detail}")
                         # Return OpenAI-compatible error response
                         return {
@@ -1812,7 +1826,7 @@ async def api_chat_completions(request: Request, api_key: dict = Depends(rate_li
                 return final_response
 
             except httpx.HTTPStatusError as e:
-                error_detail = f"LMArena API error: {e.response.status_code}"
+                error_detail = f"Upstream service error: {e.response.status_code}"
                 try:
                     error_body = e.response.json()
                     error_detail += f" - {error_body}"
@@ -1843,7 +1857,7 @@ async def api_chat_completions(request: Request, api_key: dict = Depends(rate_li
                 # Return OpenAI-compatible error response
                 return {
                     "error": {
-                        "message": "Request to LMArena API timed out after 120 seconds",
+                        "message": "Request to the upstream service timed out after 120 seconds",
                         "type": "timeout_error",
                         "code": "request_timeout"
                     }
@@ -1875,7 +1889,7 @@ async def api_chat_completions(request: Request, api_key: dict = Depends(rate_li
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("🚀 LMArena Bridge Server Starting...")
+    print("🚀 API Bridge Server Starting...")
     print("=" * 60)
     print(f"📍 Dashboard: http://localhost:{PORT}/dashboard")
     print(f"🔐 Login: http://localhost:{PORT}/login")

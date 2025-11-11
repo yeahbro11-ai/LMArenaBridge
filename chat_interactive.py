@@ -1,5 +1,5 @@
 """
-Interactive chat script using OpenAI Python library with LMArena Bridge
+Interactive chat script using OpenAI Python library with API Bridge
 Allows you to have a conversation with any model available through the bridge
 """
 
@@ -176,7 +176,7 @@ def select_model(client, models):
 def main():
     """Main function"""
     print("=" * 60)
-    print("🚀 LMArena Bridge - Interactive Chat")
+    print("🚀 API Bridge - Interactive Chat")
     print("=" * 60)
     
     # Initialize OpenAI client
@@ -185,7 +185,7 @@ def main():
             api_key=API_KEY,
             base_url=BASE_URL
         )
-        print("✅ Connected to LMArena Bridge")
+        print("✅ Connected to API Bridge")
     except Exception as e:
         print(f"❌ Failed to initialize client: {e}")
         return

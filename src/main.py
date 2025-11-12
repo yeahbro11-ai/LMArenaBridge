@@ -1659,6 +1659,13 @@ async def api_chat_completions(request: Request, api_key: dict = Depends(rate_li
             debug_print(f"❌ {error_msg}")
             raise HTTPException(status_code=400, detail=error_msg)
         
+        context_status_after = context_status_before
+        request_usage = {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": 0,
+            "total_tokens": prompt_tokens
+        }
+        
         if not session:
             debug_print("🆕 Creating NEW conversation session")
             # New conversation - Generate all IDs at once (like the browser does)
@@ -1713,13 +1720,6 @@ async def api_chat_completions(request: Request, api_key: dict = Depends(rate_li
 
             debug_print(f"\n🚀 Making API request to upstream service...")
             debug_print(f"⏱️  Timeout set to: 120 seconds")
-
-            context_status_after = context_status_before
-            request_usage = {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": 0,
-                "total_tokens": prompt_tokens
-            }
 
             # Handle streaming mode
             if stream:

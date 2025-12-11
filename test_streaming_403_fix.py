@@ -47,6 +47,8 @@ def test_request_headers():
     
     assert "User-Agent" in headers_normal, "User-Agent should be present"
     assert "Mozilla" in headers_normal["User-Agent"], "User-Agent should contain Mozilla"
+    assert "Referer" in headers_normal, "Referer should be present"
+    assert "Origin" in headers_normal, "Origin should be present"
     assert headers_normal["Accept"] == "*/*", "Non-streaming Accept should be */*"
     
     # Test streaming headers
@@ -77,7 +79,7 @@ def test_imports():
         # Check for required functions
         required_functions = [
             'get_request_headers_with_token',
-            'get_captcha_token',
+            'get_or_extract_recaptcha_token',
             'get_next_auth_token',
         ]
         

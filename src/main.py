@@ -591,7 +591,9 @@ def get_request_headers_with_token(token: str, recaptcha_token: Optional[str] = 
     headers = {
         "Content-Type": "text/plain;charset=UTF-8",
         "Cookie": f"cf_clearance={cf_clearance}; arena-auth-prod-v1={token}",
-        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://lmarena.ai/",
+        "Origin": "https://lmarena.ai"
     }
     
     # Add Accept header based on request type
@@ -2349,6 +2351,10 @@ async def api_chat_completions(request: Request, api_key: dict = Depends(rate_li
                             async with stream_context as response:
                                 # Log status with human-readable message
                                 log_http_status(response.status_code, "LMArena API Stream")
+                                
+                                # Read error response content if status code indicates error
+                                if response.status_code >= 400:
+                                    await response.aread()
                                 
                                 # Check for retry-able errors before processing stream
                                 if response.status_code == HTTPStatus.TOO_MANY_REQUESTS:

@@ -484,6 +484,22 @@ current_token_index = 0
 conversation_tokens: Dict[str, str] = {}
 # Track failed tokens per request to avoid retrying with same token
 request_failed_tokens: Dict[str, set] = {}
+# Persistent browser instance for token generation
+persistent_browser = None
+persistent_browser_page = None
+# Track browser state for health monitoring
+browser_health = {
+    "is_healthy": False,
+    "last_check": None,
+    "error_count": 0,
+    "restart_count": 0
+}
+# reCAPTCHA token cache with expiration
+captcha_token_cache = {
+    "token": None,
+    "generated_time": None,
+    "expiration_time": None  # 2 minutes from generation
+}
 
 # --- Helper Functions ---
 
@@ -659,12 +675,168 @@ async def rate_limit_api_key(key: str = Depends(API_KEY_HEADER)):
 
 # --- Core Logic ---
 
+async def initialize_persistent_browser():
+    """Initialize a persistent Camoufox browser instance for token generation"""
+    global persistent_browser, persistent_browser_page, browser_health
+    
+    try:
+        debug_print("🌐 Initializing persistent Camoufox browser...")
+        persistent_browser = await AsyncCamoufox(headless=True).__aenter__()
+        persistent_browser_page = await persistent_browser.new_page()
+        
+        debug_print("🌐 Navigating persistent browser to lmarena.ai...")
+        await persistent_browser_page.goto("https://lmarena.ai/", wait_until="domcontentloaded", timeout=60000)
+        
+        debug_print("⏳ Waiting for Cloudflare challenge to complete...")
+        try:
+            await persistent_browser_page.wait_for_function(
+                "() => document.title.indexOf('Just a moment...') === -1", 
+                timeout=45000
+            )
+            debug_print("✅ Cloudflare challenge passed on persistent browser.")
+        except Exception as e:
+            debug_print(f"⚠️  Cloudflare challenge timeout on persistent browser: {e}")
+        
+        browser_health["is_healthy"] = True
+        browser_health["last_check"] = time.time()
+        browser_health["error_count"] = 0
+        debug_print("✅ Persistent browser initialized successfully")
+        
+    except Exception as e:
+        debug_print(f"❌ Error initializing persistent browser: {e}")
+        browser_health["is_healthy"] = False
+        browser_health["error_count"] += 1
+        persistent_browser = None
+        persistent_browser_page = None
+
+async def restart_persistent_browser():
+    """Restart the persistent browser if it becomes unhealthy"""
+    global persistent_browser, persistent_browser_page
+    
+    try:
+        debug_print("🔄 Restarting persistent browser...")
+        
+        # Clean up old browser if it exists
+        if persistent_browser_page:
+            try:
+                await persistent_browser_page.close()
+            except:
+                pass
+        
+        if persistent_browser:
+            try:
+                await persistent_browser.__aexit__(None, None, None)
+            except:
+                pass
+        
+        persistent_browser = None
+        persistent_browser_page = None
+        
+        # Reinitialize
+        await initialize_persistent_browser()
+        browser_health["restart_count"] += 1
+        
+    except Exception as e:
+        debug_print(f"❌ Error restarting persistent browser: {e}")
+        browser_health["is_healthy"] = False
+
+async def get_captcha_token():
+    """Get a valid reCAPTCHA token from the persistent browser"""
+    global persistent_browser_page, captcha_token_cache
+    
+    try:
+        current_time = time.time()
+        
+        # Check if we have a valid cached token (expires in 2 minutes)
+        if captcha_token_cache["token"] and captcha_token_cache["expiration_time"]:
+            if current_time < captcha_token_cache["expiration_time"]:
+                debug_print(f"✅ Using cached reCAPTCHA token (expires in {int(captcha_token_cache['expiration_time'] - current_time)}s)")
+                return captcha_token_cache["token"]
+            else:
+                debug_print("⚠️  Cached reCAPTCHA token expired, generating new one")
+        
+        # Browser health check
+        if not browser_health["is_healthy"] or not persistent_browser_page:
+            debug_print("⚠️  Browser not healthy, attempting restart...")
+            await restart_persistent_browser()
+            if not browser_health["is_healthy"]:
+                debug_print("❌ Browser restart failed, cannot generate token")
+                return None
+        
+        # Generate new token by executing JavaScript to get reCAPTCHA token
+        try:
+            # This attempts to get the token from the page's reCAPTCHA instance
+            token = await persistent_browser_page.evaluate(
+                "() => window.grecaptcha ? window.grecaptcha.getResponse() : null"
+            )
+            
+            if token:
+                captcha_token_cache["token"] = token
+                captcha_token_cache["generated_time"] = current_time
+                captcha_token_cache["expiration_time"] = current_time + 120  # 2 minute expiration
+                debug_print(f"✅ Generated new reCAPTCHA token (valid for 120s)")
+                return token
+            else:
+                debug_print("⚠️  No reCAPTCHA token found on page")
+                return None
+                
+        except Exception as e:
+            debug_print(f"⚠️  Error getting reCAPTCHA token: {e}")
+            return None
+            
+    except Exception as e:
+        debug_print(f"❌ Error in get_captcha_token: {e}")
+        return None
+
+async def monitor_browser_health():
+    """Background task to monitor persistent browser health"""
+    while True:
+        try:
+            await asyncio.sleep(30)  # Check every 30 seconds
+            
+            if not browser_health["is_healthy"]:
+                debug_print("⚠️  Browser health check: UNHEALTHY")
+                continue
+            
+            try:
+                # Simple health check - try to get page title
+                if persistent_browser_page:
+                    title = await persistent_browser_page.title()
+                    browser_health["last_check"] = time.time()
+                    browser_health["error_count"] = 0
+                    debug_print(f"✅ Browser health check: OK (title: {title[:30]})")
+                else:
+                    debug_print("⚠️  Browser page is None")
+                    browser_health["is_healthy"] = False
+                    
+            except Exception as e:
+                debug_print(f"⚠️  Browser health check failed: {e}")
+                browser_health["error_count"] += 1
+                
+                # If multiple errors, restart browser
+                if browser_health["error_count"] >= 3:
+                    debug_print("❌ Browser health check failed multiple times, restarting...")
+                    await restart_persistent_browser()
+                    
+        except Exception as e:
+            debug_print(f"❌ Error in browser health monitoring: {e}")
+
 async def get_initial_data():
     debug_print("Starting initial data retrieval...")
     try:
-        async with AsyncCamoufox(headless=True) as browser:
+        # Use persistent browser if available, otherwise create a temporary one
+        if browser_health["is_healthy"] and persistent_browser:
+            debug_print("📖 Using persistent browser for initial data retrieval")
+            browser = persistent_browser
+            page = persistent_browser_page
+            should_close = False
+        else:
+            debug_print("📖 Creating temporary browser for initial data retrieval")
+            browser = await AsyncCamoufox(headless=True).__aenter__()
             page = await browser.new_page()
-            
+            should_close = True
+        
+        try:
             # Set up route interceptor BEFORE navigating
             debug_print("  🎯 Setting up route interceptor for JS chunks...")
             captured_responses = []
@@ -814,8 +986,40 @@ async def get_initial_data():
                 debug_print(f"   This is optional - continuing without them")
 
             debug_print("✅ Initial data retrieval complete")
+        finally:
+            # Close browser only if it was temporary (not the persistent one)
+            if should_close:
+                try:
+                    if page and page != persistent_browser_page:
+                        await page.close()
+                except:
+                    pass
+                try:
+                    await browser.__aexit__(None, None, None)
+                except:
+                    pass
     except Exception as e:
         debug_print(f"❌ An error occurred during initial data retrieval: {e}")
+
+async def periodic_captcha_refresh_task():
+    """Background task to refresh reCAPTCHA tokens every 100 seconds (before 2-minute expiration)"""
+    while True:
+        try:
+            # Wait 100 seconds (refresh tokens before 2-minute expiration)
+            await asyncio.sleep(100)
+            
+            # Check if token is near expiration
+            current_time = time.time()
+            if captcha_token_cache.get("expiration_time"):
+                time_until_expiration = captcha_token_cache["expiration_time"] - current_time
+                if time_until_expiration < 30:  # Refresh if less than 30 seconds until expiration
+                    debug_print(f"⏱️  reCAPTCHA token expiring in {int(time_until_expiration)}s, generating new one...")
+                    await get_captcha_token()
+            
+        except Exception as e:
+            debug_print(f"⚠️  Error in periodic CAPTCHA refresh task: {e}")
+            # Continue the loop even if there's an error
+            continue
 
 async def periodic_refresh_task():
     """Background task to refresh cf_clearance and models every 30 minutes"""
@@ -842,10 +1046,16 @@ async def startup_event():
         save_models(get_models())
         # Load usage stats from config
         load_usage_stats()
+        # Initialize persistent browser for token generation
+        asyncio.create_task(initialize_persistent_browser())
         # Start initial data fetch
         asyncio.create_task(get_initial_data())
         # Start periodic refresh task (every 30 minutes)
         asyncio.create_task(periodic_refresh_task())
+        # Start browser health monitoring task
+        asyncio.create_task(monitor_browser_health())
+        # Start reCAPTCHA token refresh task
+        asyncio.create_task(periodic_captcha_refresh_task())
     except Exception as e:
         debug_print(f"❌ Error during startup: {e}")
         # Continue anyway - server should still start
@@ -1685,6 +1895,29 @@ async def refresh_tokens(session: str = Depends(get_current_session)):
         debug_print(f"❌ Error refreshing tokens: {e}")
     return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
 
+@app.post("/restart-browser")
+async def restart_browser(session: str = Depends(get_current_session)):
+    """Endpoint to manually restart the persistent browser"""
+    if not session:
+        return RedirectResponse(url="/login")
+    try:
+        await restart_persistent_browser()
+    except Exception as e:
+        debug_print(f"❌ Error restarting browser: {e}")
+    return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+
+@app.get("/api/v1/browser-health")
+async def get_browser_health():
+    """Get the health status of the persistent browser"""
+    return {
+        "browser_health": browser_health,
+        "captcha_token_cache": {
+            "has_token": captcha_token_cache["token"] is not None,
+            "generated_time": captcha_token_cache.get("generated_time"),
+            "expires_in_seconds": int(captcha_token_cache.get("expiration_time", 0) - time.time()) if captcha_token_cache.get("expiration_time") else None
+        }
+    }
+
 # --- OpenAI Compatible API Endpoints ---
 
 @app.get("/api/v1/health")
@@ -1699,7 +1932,10 @@ async def health_check():
         has_models = len(models) > 0
         has_api_keys = len(config.get("api_keys", [])) > 0
         
-        status = "healthy" if (has_cf_clearance and has_models) else "degraded"
+        # Browser health
+        browser_ok = browser_health.get("is_healthy", False)
+        
+        status = "healthy" if (has_cf_clearance and has_models and browser_ok) else "degraded"
         
         return {
             "status": status,
@@ -1708,7 +1944,9 @@ async def health_check():
                 "cf_clearance": has_cf_clearance,
                 "models_loaded": has_models,
                 "model_count": len(models),
-                "api_keys_configured": has_api_keys
+                "api_keys_configured": has_api_keys,
+                "persistent_browser": browser_ok,
+                "browser_restarts": browser_health.get("restart_count", 0)
             }
         }
     except Exception as e:

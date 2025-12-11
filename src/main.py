@@ -18,6 +18,17 @@ from fastapi.security import APIKeyHeader
 
 import httpx
 
+# Import reCAPTCHA bypass module (with fallback for testing)
+try:
+    from recaptcha_bypass import get_recaptcha_bypass, extract_recaptcha_token
+except ImportError:
+    # Fallback functions for testing
+    def get_recaptcha_bypass():
+        return None
+    
+    async def extract_recaptcha_token(anchor_url):
+        return None
+
 # ============================================================
 # CONFIGURATION
 # ============================================================
@@ -484,6 +495,12 @@ current_token_index = 0
 conversation_tokens: Dict[str, str] = {}
 # Track failed tokens per request to avoid retrying with same token
 request_failed_tokens: Dict[str, set] = {}
+# Track reCAPTCHA tokens and their cache
+recaptcha_token_cache: Dict[str, tuple[str, float]] = {}
+# Track anchor URLs per domain for reCAPTCHA
+recaptcha_anchor_urls: Dict[str, str] = {}
+# Default anchor URL for LMArena
+DEFAULT_LMARENA_ANCHOR_URL = "https://www.google.com/recaptcha/enterprise/anchor?ar=1&k=6Led_uYrAAAAAKjxDIF58fgFtX3t8loNAK85bW9I&co=aHR0cHM6Ly9sbWFyZW5hLmFpOjQ0Mw==&hl=de&v=jdMmXeCQEkPbnFDy9T04NbgJ&size=invisible&anchor-ms=20000&execute-ms=15000&cb=rtb16dw1hds"
 
 # --- Helper Functions ---
 
@@ -560,14 +577,35 @@ def get_request_headers():
     
     return get_request_headers_with_token(token)
 
-def get_request_headers_with_token(token: str):
-    """Get request headers with a specific auth token"""
+def get_request_headers_with_token(token: str, recaptcha_token: Optional[str] = None, for_streaming: bool = False):
+    """Get request headers with a specific auth token
+    
+    Args:
+        token: Arena auth token
+        recaptcha_token: Optional reCAPTCHA Enterprise v3 token
+        for_streaming: Whether headers are for streaming requests
+    """
     config = get_config()
     cf_clearance = config.get("cf_clearance", "").strip()
-    return {
+    
+    headers = {
         "Content-Type": "text/plain;charset=UTF-8",
         "Cookie": f"cf_clearance={cf_clearance}; arena-auth-prod-v1={token}",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
+    
+    # Add Accept header based on request type
+    if for_streaming:
+        headers["Accept"] = "text/event-stream"
+    else:
+        headers["Accept"] = "*/*"
+    
+    # Add reCAPTCHA token if available
+    if recaptcha_token:
+        headers["x-recaptcha-token"] = recaptcha_token
+        debug_print(f"🔐 Added reCAPTCHA token to headers: {recaptcha_token[:20]}...")
+    
+    return headers
 
 def get_next_auth_token(exclude_tokens: set = None):
     """Get next auth token using round-robin selection
@@ -608,6 +646,121 @@ def remove_auth_token(token: str):
             debug_print(f"🗑️  Removed expired token from list: {token[:20]}...")
     except Exception as e:
         debug_print(f"⚠️  Error removing auth token: {e}")
+
+# --- reCAPTCHA Token Management ---
+
+def get_cached_recaptcha_token(domain: str = "lmarena.ai") -> Optional[str]:
+    """
+    Get cached reCAPTCHA token for domain if still valid.
+    
+    Args:
+        domain: Domain to get token for (default: lmarena.ai)
+        
+    Returns:
+        Cached token if valid, None otherwise
+    """
+    if domain in recaptcha_token_cache:
+        token, timestamp = recaptcha_token_cache[domain]
+        if time.time() - timestamp < 120:  # 2 minutes TTL
+            debug_print(f"✅ Using cached reCAPTCHA token for {domain}")
+            return token
+        else:
+            debug_print(f"⏰ Cached reCAPTCHA token for {domain} expired")
+            del recaptcha_token_cache[domain]
+    return None
+
+def cache_recaptcha_token(token: str, domain: str = "lmarena.ai"):
+    """
+    Cache reCAPTCHA token with timestamp.
+    
+    Args:
+        token: reCAPTCHA token to cache
+        domain: Domain to cache for (default: lmarena.ai)
+    """
+    recaptcha_token_cache[domain] = (token, time.time())
+    debug_print(f"💾 Cached reCAPTCHA token for {domain}: {token[:20]}...")
+
+async def get_or_extract_recaptcha_token(anchor_url: Optional[str] = None, domain: str = "lmarena.ai") -> Optional[str]:
+    """
+    Get or extract reCAPTCHA token with caching.
+    
+    Args:
+        anchor_url: Optional anchor URL to extract token from
+        domain: Domain to cache token for (default: lmarena.ai)
+        
+    Returns:
+        reCAPTCHA token if successful, None otherwise
+    """
+    # Try cache first
+    cached_token = get_cached_recaptcha_token(domain)
+    if cached_token:
+        return cached_token
+    
+    # Use provided anchor URL or default
+    target_anchor_url = anchor_url or recaptcha_anchor_urls.get(domain) or DEFAULT_LMARENA_ANCHOR_URL
+    
+    try:
+        debug_print(f"🔄 Extracting fresh reCAPTCHA token for {domain}...")
+        # Extract token using bypass module
+        token = await extract_recaptcha_token(target_anchor_url)
+        
+        if token:
+            cache_recaptcha_token(token, domain)
+            return token
+        else:
+            debug_print(f"❌ Failed to extract reCAPTCHA token for {domain}")
+            return None
+            
+    except Exception as e:
+        debug_print(f"❌ Error extracting reCAPTCHA token: {e}")
+        return None
+
+async def refresh_recaptcha_token(domain: str = "lmarena.ai") -> Optional[str]:
+    """
+    Force refresh reCAPTCHA token (bypass cache).
+    
+    Args:
+        domain: Domain to refresh token for (default: lmarena.ai)
+        
+    Returns:
+        Fresh reCAPTCHA token if successful, None otherwise
+    """
+    # Clear cache
+    if domain in recaptcha_token_cache:
+        del recaptcha_token_cache[domain]
+        debug_print(f"🗑️  Cleared cached reCAPTCHA token for {domain}")
+    
+    # Extract fresh token
+    return await get_or_extract_recaptcha_token(domain=domain)
+
+def handle_recaptcha_error(error_response, attempt: int, max_retries: int) -> bool:
+    """
+    Handle reCAPTCHA-related errors and determine if retry is needed.
+    
+    Args:
+        error_response: HTTP response object
+        attempt: Current attempt number
+        max_retries: Maximum retry attempts
+        
+    Returns:
+        True if should retry, False otherwise
+    """
+    if error_response.status_code == 403:
+        # Check if it's a reCAPTCHA error
+        try:
+            error_data = error_response.json()
+            if isinstance(error_data, dict):
+                error_message = error_data.get("error", "") or error_data.get("message", "")
+                if "recaptcha" in error_message.lower() or "captcha" in error_message.lower():
+                    debug_print(f"🔐 reCAPTCHA validation failed on attempt {attempt + 1}/{max_retries}")
+                    return attempt < max_retries - 1
+        except:
+            # Fallback: check response text
+            if "recaptcha" in error_response.text.lower() or "captcha" in error_response.text.lower():
+                debug_print(f"🔐 reCAPTCHA validation failed on attempt {attempt + 1}/{max_retries}")
+                return attempt < max_retries - 1
+    
+    return False
 
 # --- Dashboard Authentication ---
 
@@ -818,7 +971,7 @@ async def get_initial_data():
         debug_print(f"❌ An error occurred during initial data retrieval: {e}")
 
 async def periodic_refresh_task():
-    """Background task to refresh cf_clearance and models every 30 minutes"""
+    """Background task to refresh cf_clearance, models, and reCAPTCHA tokens every 30 minutes"""
     while True:
         try:
             # Wait 30 minutes (1800 seconds)
@@ -827,6 +980,9 @@ async def periodic_refresh_task():
             debug_print("🔄 Starting scheduled 30-minute refresh...")
             debug_print("="*60)
             await get_initial_data()
+            # Also refresh reCAPTCHA token periodically
+            debug_print("🔐 Refreshing reCAPTCHA token...")
+            await refresh_recaptcha_token()
             debug_print("✅ Scheduled refresh completed")
             debug_print("="*60 + "\n")
         except Exception as e:
@@ -1055,6 +1211,11 @@ async def dashboard(session: str = Depends(get_current_session)):
     
     cf_status = "✅ Configured" if config.get("cf_clearance") else "❌ Not Set"
     cf_class = "status-good" if config.get("cf_clearance") else "status-bad"
+    
+    # Check reCAPTCHA token status
+    recaptcha_token = get_cached_recaptcha_token()
+    recaptcha_status = "✅ Available" if recaptcha_token else "❌ Not Available"
+    recaptcha_class = "status-good" if recaptcha_token else "status-bad"
     
     # Get recent activity count (last 24 hours)
     recent_activity = sum(1 for timestamps in api_key_usage.values() for t in timestamps if time.time() - t < 86400)
@@ -1413,6 +1574,35 @@ async def dashboard(session: str = Depends(get_current_session)):
                     <p style="color: #999; font-size: 13px; margin-top: 10px;"><em>Note: This will fetch a fresh cf_clearance token and update the model list.</em></p>
                 </div>
 
+                <!-- reCAPTCHA Enterprise v3 -->
+                <div class="section">
+                    <div class="section-header">
+                        <h2>🔐 reCAPTCHA Enterprise v3 Bypass</h2>
+                        <span class="status-badge {recaptcha_class}">{recaptcha_status}</span>
+                    </div>
+                    <p style="color: #666; margin-bottom: 15px;">Enterprise reCAPTCHA v3 tokens are automatically extracted and cached. Used for LM Arena authentication bypass.</p>
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                            <span><strong>Token Status:</strong></span>
+                            <span>{recaptcha_status}</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                            <span><strong>Cache Expiry:</strong></span>
+                            <span>2 minutes from extraction</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between;">
+                            <span><strong>Default Anchor URL:</strong></span>
+                            <span style="font-size: 12px; color: #666;">LM Arena Enterprise</span>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 10px;">
+                        <form action="/refresh-recaptcha" method="post" style="margin: 0;">
+                            <button type="submit" style="background: #007bff;">🔄 Refresh reCAPTCHA Token</button>
+                        </form>
+                    </div>
+                    <p style="color: #999; font-size: 13px; margin-top: 10px;"><em>Note: Tokens are automatically refreshed every 30 minutes or on 403 reCAPTCHA errors.</em></p>
+                </div>
+
                 <!-- API Keys -->
                 <div class="section">
                     <div class="section-header">
@@ -1681,8 +1871,27 @@ async def refresh_tokens(session: str = Depends(get_current_session)):
         return RedirectResponse(url="/login")
     try:
         await get_initial_data()
+        # Also refresh reCAPTCHA token
+        debug_print("🔐 Refreshing reCAPTCHA token...")
+        await refresh_recaptcha_token()
     except Exception as e:
         debug_print(f"❌ Error refreshing tokens: {e}")
+    return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+
+@app.post("/refresh-recaptcha")
+async def refresh_recaptcha_endpoint(session: str = Depends(get_current_session)):
+    """Endpoint to manually refresh reCAPTCHA token"""
+    if not session:
+        return RedirectResponse(url="/login")
+    try:
+        debug_print("🔐 Manual reCAPTCHA token refresh requested...")
+        token = await refresh_recaptcha_token()
+        if token:
+            debug_print("✅ reCAPTCHA token refreshed successfully")
+        else:
+            debug_print("❌ Failed to refresh reCAPTCHA token")
+    except Exception as e:
+        debug_print(f"❌ Error refreshing reCAPTCHA token: {e}")
     return RedirectResponse(url="/dashboard", status_code=status.HTTP_303_SEE_OTHER)
 
 # --- OpenAI Compatible API Endpoints ---
@@ -1698,14 +1907,16 @@ async def health_check():
         has_cf_clearance = bool(config.get("cf_clearance"))
         has_models = len(models) > 0
         has_api_keys = len(config.get("api_keys", [])) > 0
+        has_recaptcha_token = bool(get_cached_recaptcha_token())
         
-        status = "healthy" if (has_cf_clearance and has_models) else "degraded"
+        status = "healthy" if (has_cf_clearance and has_models and has_recaptcha_token) else "degraded"
         
         return {
             "status": status,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "checks": {
                 "cf_clearance": has_cf_clearance,
+                "recaptcha_token": has_recaptcha_token,
                 "models_loaded": has_models,
                 "model_count": len(models),
                 "api_keys_configured": has_api_keys
@@ -2011,11 +2222,21 @@ async def api_chat_completions(request: Request, api_key: dict = Depends(rate_li
         
         # Retry logic wrapper
         async def make_request_with_retry(url, payload, http_method, max_retries=3):
-            """Make request with automatic retry on 429/401 errors"""
+            """Make request with automatic retry on 429/401/403 errors (with reCAPTCHA handling)"""
             nonlocal current_token, headers, failed_tokens
             
             for attempt in range(max_retries):
                 try:
+                    # Check if we need to get a fresh reCAPTCHA token
+                    recaptcha_token = None
+                    if attempt > 0:  # Only try to get reCAPTCHA token on retry attempts
+                        debug_print(f"🔐 Attempting to get reCAPTCHA token on retry attempt {attempt + 1}")
+                        recaptcha_token = await get_or_extract_recaptcha_token()
+                        if recaptcha_token:
+                            # Update headers with reCAPTCHA token
+                            headers = get_request_headers_with_token(current_token, recaptcha_token=recaptcha_token)
+                            debug_print(f"🔐 Updated headers with reCAPTCHA token")
+                    
                     async with httpx.AsyncClient() as client:
                         if http_method == "PUT":
                             response = await client.put(url, json=payload, headers=headers, timeout=120)
@@ -2036,7 +2257,7 @@ async def api_chat_completions(request: Request, api_key: dict = Depends(rate_li
                                 try:
                                     # Try with next token (excluding failed ones)
                                     current_token = get_next_auth_token(exclude_tokens=failed_tokens)
-                                    headers = get_request_headers_with_token(current_token)
+                                    headers = get_request_headers_with_token(current_token, recaptcha_token=recaptcha_token)
                                     debug_print(f"🔄 Retrying with next token: {current_token[:20]}...")
                                     await asyncio.sleep(1)  # Brief delay
                                     continue
@@ -2056,7 +2277,7 @@ async def api_chat_completions(request: Request, api_key: dict = Depends(rate_li
                                 try:
                                     # Try with next available token (excluding failed ones)
                                     current_token = get_next_auth_token(exclude_tokens=failed_tokens)
-                                    headers = get_request_headers_with_token(current_token)
+                                    headers = get_request_headers_with_token(current_token, recaptcha_token=recaptcha_token)
                                     debug_print(f"🔄 Retrying with next token: {current_token[:20]}...")
                                     await asyncio.sleep(1)  # Brief delay
                                     continue
@@ -2064,13 +2285,24 @@ async def api_chat_completions(request: Request, api_key: dict = Depends(rate_li
                                     debug_print(f"❌ No more tokens available: {e.detail}")
                                     break
                         
+                        elif response.status_code == HTTPStatus.FORBIDDEN:
+                            # Check if it's a reCAPTCHA error
+                            if handle_recaptcha_error(response, attempt, max_retries):
+                                debug_print(f"🔐 reCAPTCHA validation failed, will retry with fresh token")
+                                if attempt < max_retries - 1:
+                                    await asyncio.sleep(2)  # Wait longer for reCAPTCHA retry
+                                    continue
+                            else:
+                                # Not a reCAPTCHA error, re-raise
+                                response.raise_for_status()
+                        
                         # If we get here, return the response (success or non-retryable error)
                         response.raise_for_status()
                         return response
                         
                 except httpx.HTTPStatusError as e:
-                    # Only handle 429 and 401, let other errors through
-                    if e.response.status_code not in [429, 401]:
+                    # Handle 429, 401, and 403 errors
+                    if e.response.status_code not in [429, 401, 403]:
                         raise
                     # If last attempt, raise the error
                     if attempt == max_retries - 1:
@@ -2093,8 +2325,21 @@ async def api_chat_completions(request: Request, api_key: dict = Depends(rate_li
                     reasoning_text = ""
                     citations = []
                     try:
+                        # Check if we need to get a fresh reCAPTCHA token for streaming
+                        recaptcha_token = None
+                        if attempt > 0:  # Only try to get reCAPTCHA token on retry attempts
+                            debug_print(f"🔐 Streaming: Attempting to get reCAPTCHA token on retry attempt {attempt + 1}")
+                            recaptcha_token = await get_or_extract_recaptcha_token()
+                            if recaptcha_token:
+                                # Update headers with reCAPTCHA token for streaming
+                                headers = get_request_headers_with_token(current_token, recaptcha_token=recaptcha_token, for_streaming=True)
+                                debug_print(f"🔐 Streaming: Updated headers with reCAPTCHA token")
+                        
                         async with httpx.AsyncClient() as client:
                             debug_print(f"📡 Sending {http_method} request for streaming (attempt {attempt + 1}/{max_retries})...")
+                            
+                            # Always use streaming headers
+                            headers = get_request_headers_with_token(current_token, recaptcha_token=recaptcha_token, for_streaming=True)
                             
                             if http_method == "PUT":
                                 stream_context = client.stream('PUT', url, json=payload, headers=headers, timeout=120)
@@ -2110,7 +2355,7 @@ async def api_chat_completions(request: Request, api_key: dict = Depends(rate_li
                                     debug_print(f"⏱️  Stream attempt {attempt + 1}/{max_retries}")
                                     if attempt < max_retries - 1:
                                         current_token = get_next_auth_token()
-                                        headers = get_request_headers_with_token(current_token)
+                                        headers = get_request_headers_with_token(current_token, recaptcha_token=recaptcha_token, for_streaming=True)
                                         debug_print(f"🔄 Retrying stream with next token: {current_token[:20]}...")
                                         await asyncio.sleep(1)
                                         continue
@@ -2121,13 +2366,24 @@ async def api_chat_completions(request: Request, api_key: dict = Depends(rate_li
                                     if attempt < max_retries - 1:
                                         try:
                                             current_token = get_next_auth_token()
-                                            headers = get_request_headers_with_token(current_token)
+                                            headers = get_request_headers_with_token(current_token, recaptcha_token=recaptcha_token, for_streaming=True)
                                             debug_print(f"🔄 Retrying stream with next token: {current_token[:20]}...")
                                             await asyncio.sleep(1)
                                             continue
                                         except HTTPException:
                                             debug_print(f"❌ No more tokens available")
                                             break
+                                
+                                elif response.status_code == HTTPStatus.FORBIDDEN:
+                                    # Check if it's a reCAPTCHA error for streaming
+                                    if handle_recaptcha_error(response, attempt, max_retries):
+                                        debug_print(f"🔐 Stream: reCAPTCHA validation failed, will retry with fresh token")
+                                        if attempt < max_retries - 1:
+                                            await asyncio.sleep(2)  # Wait longer for reCAPTCHA retry
+                                            continue
+                                    else:
+                                        # Not a reCAPTCHA error, re-raise
+                                        response.raise_for_status()
                                 
                                 log_http_status(response.status_code, "Stream Connection")
                                 response.raise_for_status()
